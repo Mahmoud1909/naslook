@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "574849261990",
+    "firebase_url": "https://naslookapp-ecf15-default-rtdb.firebaseio.com",
+    "project_id": "naslookapp-ecf15",
+    "storage_bucket": "naslookapp-ecf15.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:574849261990:android:c979e5335381f7a6c4af67",
+        "android_client_info": {
+          "package_name": "com.example.naslook"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC2slKpjtRNhbCHDWEO9G5s-z7J9ZG-I4M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:574849261990:android:2c9590fbbccfbdd8c4af67",
+        "android_client_info": {
+          "package_name": "com.work.work"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC2slKpjtRNhbCHDWEO9G5s-z7J9ZG-I4M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
