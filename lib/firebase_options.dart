@@ -4,16 +4,6 @@ import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 
-/// Default [FirebaseOptions] for use with your Firebase apps.
-///
-/// Example:
-/// ```dart
-/// import 'firebase_options.dart';
-/// // ...
-/// await Firebase.initializeApp(
-///   options: DefaultFirebaseOptions.currentPlatform,
-/// );
-/// ```
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
@@ -67,6 +57,8 @@ class DefaultFirebaseOptions {
     projectId: 'naslookapp-ecf15',
     databaseURL: 'https://naslookapp-ecf15-default-rtdb.firebaseio.com',
     storageBucket: 'naslookapp-ecf15.firebasestorage.app',
+    androidClientId: '574849261990-4iaefgh0imasom85d79dl2i4s1obmkk9.apps.googleusercontent.com',
+    iosClientId: '574849261990-gqebfdc5al7fbqvnvlpc5hp6i7o0ttac.apps.googleusercontent.com',
     iosBundleId: 'com.example.naslook',
   );
 
@@ -77,6 +69,8 @@ class DefaultFirebaseOptions {
     projectId: 'naslookapp-ecf15',
     databaseURL: 'https://naslookapp-ecf15-default-rtdb.firebaseio.com',
     storageBucket: 'naslookapp-ecf15.firebasestorage.app',
+    androidClientId: '574849261990-4iaefgh0imasom85d79dl2i4s1obmkk9.apps.googleusercontent.com',
+    iosClientId: '574849261990-gqebfdc5al7fbqvnvlpc5hp6i7o0ttac.apps.googleusercontent.com',
     iosBundleId: 'com.example.naslook',
   );
 
@@ -90,4 +84,7 @@ class DefaultFirebaseOptions {
     storageBucket: 'naslookapp-ecf15.firebasestorage.app',
     measurementId: 'G-409K5LVQM6',
   );
+
+  //Test
+
 }

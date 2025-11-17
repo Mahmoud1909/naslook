@@ -7,8 +7,10 @@ list(APPEND FLUTTER_PLUGIN_LIST
   cloud_firestore
   desktop_webview_auth
   desktop_webview_window
+  file_selector_windows
   firebase_auth
   firebase_core
+  firebase_storage
   geolocator_windows
   url_launcher_windows
   window_to_front

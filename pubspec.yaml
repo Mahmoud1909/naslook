@@ -61,6 +61,8 @@ dependencies:
   desktop_webview_auth: ^0.0.15
   cloud_firestore: ^6.1.0
   google_sign_in: ^6.2.1
+  firebase_storage: ^13.0.4
+  image_picker: ^1.2.1
 
 dev_dependencies:
   flutter_test:

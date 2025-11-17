@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// Make sure auth_impl.dart exports signInWithGoogle() and signInWithApple()
 import 'package:naslook/services/auth_impl.dart';
 
 import 'home_screen.dart';
@@ -19,7 +18,8 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStateMixin {
+class _LoginScreenState extends State<LoginScreen>
+    with SingleTickerProviderStateMixin {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
@@ -28,15 +28,55 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   late final AnimationController _logoController;
   late final Animation<double> _logoScale;
 
+  // Fixed fallback document id you asked about
+  static const String _fixedUserDocId = 'SF9d8UzdjoEATMsN923O';
+
   @override
   void initState() {
     super.initState();
-    _logoController = AnimationController(vsync: this, duration: const Duration(milliseconds: 500));
-    _logoScale = Tween<double>(begin: 1.0, end: 1.08).animate(CurvedAnimation(parent: _logoController, curve: Curves.easeInOut));
+    debugPrint("ℹ️ [LIFECYCLE] initState: LoginScreen initialized.");
+    _logoController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    _logoScale = Tween<double>(begin: 1.0, end: 1.08).animate(
+      CurvedAnimation(parent: _logoController, curve: Curves.easeInOut),
+    );
+
+    // If we are on the web, check for a pending redirect result (completes redirect flows).
+    if (kIsWeb) {
+      debugPrint(
+        "ℹ️ [WEB] initState: Checking for pending redirect result (getRedirectResult)...",
+      );
+      Future.microtask(() async {
+        try {
+          _setLoading(true);
+          debugPrint(
+            "ℹ️ [WEB] Calling FirebaseAuth.instance.getRedirectResult() to handle redirected sign-in (if any).",
+          );
+          final result = await FirebaseAuth.instance.getRedirectResult();
+          if (result != null && result.user != null) {
+            debugPrint(
+              "✅ [WEB] getRedirectResult returned a user: ${result.user?.email}, uid=${result.user?.uid}",
+            );
+            final handled = await _saveUserToFirestoreAndNavigate(result.user!);
+            debugPrint("ℹ️ [WEB] Redirect result handled: $handled");
+          } else {
+            debugPrint("ℹ️ [WEB] No redirect sign-in result available.");
+          }
+        } catch (e, st) {
+          debugPrint("❌ [WEB] Error while handling redirect result: $e");
+          debugPrint(st.toString());
+        } finally {
+          _setLoading(false);
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
+    debugPrint("ℹ️ [LIFECYCLE] dispose: Cleaning up controllers.");
     _logoController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -47,8 +87,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     if (!mounted) return;
     setState(() => _loading = v);
     if (v) {
+      debugPrint("ℹ️ [UI] setLoading(true) -> start logo animation.");
       _logoController.repeat(reverse: true);
     } else {
+      debugPrint("ℹ️ [UI] setLoading(false) -> reset logo animation.");
       _logoController.reset();
     }
   }
@@ -85,6 +127,96 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     return safe;
   }
 
+  /// Save user document to Firestore with detailed logging and fallback.
+  /// Returns true if saved (either primary or fallback), false otherwise.
+  Future<bool> _writeUserDoc(
+    String docId,
+    Map<String, dynamic> payload, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final users = FirebaseFirestore.instance.collection('users');
+    final docRef = users.doc(docId);
+    debugPrint("➡️ [FS] _writeUserDoc() start -> users/$docId");
+
+    try {
+      // add timestamps server-side
+      final Map<String, dynamic> toWrite = Map.from(payload);
+      toWrite['updatedAt'] = FieldValue.serverTimestamp();
+      // if doc doesn't exist, set createdAt too
+      final existsSnap = await docRef.get().timeout(const Duration(seconds: 5));
+      if (!existsSnap.exists) {
+        debugPrint(
+          "ℹ️ [FS] Document users/$docId does not exist yet. Will set createdAt.",
+        );
+        toWrite['createdAt'] = FieldValue.serverTimestamp();
+      } else {
+        debugPrint(
+          "ℹ️ [FS] Document users/$docId already exists. Will merge updates.",
+        );
+      }
+
+      debugPrint(
+        "ℹ️ [FS] Writing keys=${toWrite.keys.toList()} to users/$docId ...",
+      );
+      await docRef.set(toWrite, SetOptions(merge: true)).timeout(timeout);
+      debugPrint("✅ [FS] Write succeeded to users/$docId");
+      return true;
+    } on FirebaseException catch (fe) {
+      debugPrint(
+        "❌ [FS] FirebaseException writing to users/$docId -> code=${fe.code} message=${fe.message}",
+      );
+      // Provide actionable hints for common errors:
+      if (fe.code == 'permission-denied') {
+        debugPrint(
+          "👉 [FS] permission-denied: your Firestore rules disallow this write.",
+        );
+        debugPrint(
+          "👉 [FS] ACTION: In Firebase Console → Firestore → Rules, allow authenticated user write to /users/{userId} or use a safe test rule temporarily.",
+        );
+        debugPrint("👉 [FS] Example secure rule to use (only allow owner):");
+        debugPrint(r"""rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}""");
+        debugPrint(
+          "👉 [FS] Example TEMPORARY test rule (UNSAFE - revert after testing):",
+        );
+        debugPrint(r"""rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}""");
+      } else if (fe.code == 'not-found') {
+        debugPrint(
+          "👉 [FS] not-found: Firestore default database might not exist for this project. Go to Firebase Console → Firestore → Create database.",
+        );
+      } else if (fe.code == 'unauthenticated') {
+        debugPrint(
+          "👉 [FS] unauthenticated: user is not authenticated; ensure FirebaseAuth.currentUser is not null.",
+        );
+      } else if (fe.code == 'unavailable' || fe.code == 'deadline-exceeded') {
+        debugPrint(
+          "👉 [FS] backend unavailable or request timed out. Check network & Firebase status.",
+        );
+      }
+      return false;
+    } on TimeoutException catch (te) {
+      debugPrint("❌ [FS] TimeoutException writing to users/$docId -> $te");
+      return false;
+    } catch (e, st) {
+      debugPrint("❌ [FS] Unknown error writing to users/$docId -> $e");
+      debugPrint(st.toString());
+      return false;
+    }
+  }
+
   Future<bool> _saveUserToFirestoreAndNavigate(User user) async {
     debugPrint("➡️ [SAVE] Starting save & navigate for uid=${user.uid}");
     try {
@@ -103,7 +235,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         firstName = parts.first;
         lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
       }
-      debugPrint("🔸 [SAVE] Parsed names: first='$firstName', last='$lastName'");
+      debugPrint(
+        "🔸 [SAVE] Parsed names: first='$firstName', last='$lastName'",
+      );
 
       final doc = <String, dynamic>{
         'uid': user.uid,
@@ -115,74 +249,106 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         'phone': user.phoneNumber ?? claims['phone'] ?? '',
         'age': claims['age']?.toString() ?? '',
         'gender': claims['gender']?.toString() ?? '',
-        'providerData': user.providerData.map((p) => {'providerId': p.providerId, 'uid': p.uid}).toList(),
-        'last_signed_in': FieldValue.serverTimestamp(),
+        'providerData': user.providerData
+            .map((p) => {'providerId': p.providerId, 'uid': p.uid})
+            .toList(),
+        // last_signed_in will be set server-side as 'updatedAt'
       };
 
-      debugPrint("🔹 [SAVE] Upserting user document into Firestore (users/${user.uid}) ...");
-      final users = FirebaseFirestore.instance.collection('users');
+      debugPrint(
+        "🔹 [SAVE] Upserting user document into Firestore (users/${user.uid}) ...",
+      );
 
-      // Attempt to write with a timeout. If it fails we continue (use local doc fallback)
-      try {
-        debugPrint("🟡 [SAVE] Calling set() on users/${user.uid} with timeout...");
-        await users.doc(user.uid).set(doc, SetOptions(merge: true)).timeout(const Duration(seconds: 8));
-        debugPrint("🟢 [SAVE] set() completed successfully.");
-      } on TimeoutException catch (te) {
-        debugPrint("⚠️ [SAVE] Firestore set() timed out: $te");
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Network slow: saving profile timed out. Continuing...')));
+      // Primary attempt: write to /users/{uid}
+      final primaryOk = await _writeUserDoc(user.uid, doc);
+      if (!primaryOk) {
+        debugPrint(
+          "⚠️ [SAVE] Primary write to users/${user.uid} failed. Trying fallback to users/$_fixedUserDocId ...",
+        );
+        final fallbackOk = await _writeUserDoc(_fixedUserDocId, doc);
+        if (!fallbackOk) {
+          debugPrint(
+            "🔴 [SAVE] Fallback write also failed. Likely Firestore rules or project configuration issue.",
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Failed to save profile to Firestore. Check console for rules/project config.',
+                ),
+              ),
+            );
+          }
+          // still proceed using local doc for navigation
+        } else {
+          debugPrint(
+            "🟡 [SAVE] Fallback write succeeded to users/$_fixedUserDocId.",
+          );
         }
-        // don't return — proceed using local doc as fallback
-      } catch (e, st) {
-        debugPrint("❌ [SAVE] Firestore set() failed: $e");
-        debugPrint(st.toString());
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to save profile to Firestore. Continuing offline.')));
-        }
-        // continue — we'll use the local doc fallback
+      } else {
+        debugPrint("🟢 [SAVE] Primary write succeeded to users/${user.uid}.");
       }
 
-      // try to fetch the saved doc (non-fatal if fails)
-      debugPrint("🟡 [SAVE] Attempting to fetch Firestore document (with timeout)...");
-      DocumentSnapshot<Map<String, dynamic>>? snapshot;
+      // Try to fetch the saved doc (non-fatal if fails)
+      debugPrint(
+        "🟡 [SAVE] Attempting to fetch Firestore document (with timeout) for users/${user.uid} ...",
+      );
+      Map<String, dynamic>? fetchedData;
       try {
-        snapshot = await users.doc(user.uid).get().timeout(const Duration(seconds: 5));
-        debugPrint("🟢 [SAVE] Firestore document fetched successfully.");
+        /*FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .snapshots()
+            .listen((snapshot) {
+          if (snapshot.exists) {
+            print('User data: ${snapshot.data()}');
+          } else {
+            print('Document does not exist');
+          }
+        });*/
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+        //.timeout(const Duration(seconds: 5));
+        if (snap.exists) {
+          fetchedData = snap.data() as Map<String, dynamic>?;
+          debugPrint(
+            "🟢 [SAVE] Firestore document fetched: keys=${fetchedData?.keys.toList()}",
+          );
+        } else {
+          debugPrint(
+            "ℹ️ [SAVE] Firestore document users/${user.uid} not found after write.",
+          );
+        }
       } on TimeoutException catch (te) {
         debugPrint("⚠️ [SAVE] Firestore get() timed out: $te");
-        snapshot = null;
+        fetchedData = null;
       } catch (e, st) {
         debugPrint("❌ [SAVE] Firestore get() failed: $e");
         debugPrint(st.toString());
-        snapshot = null;
+        fetchedData = null;
       }
 
-      debugPrint("🟡 [SAVE] snapshot is ${snapshot == null ? 'NULL' : 'not null'}");
-
-      final raw = snapshot?.data();
-      debugPrint("🟡 [SAVE] raw (snapshot.data) is ${raw == null ? 'NULL' : 'present'}");
-
-      final Map<String, dynamic> data = <String, dynamic>{};
-
-      if (raw != null) {
+      final Map<String, dynamic> dataForUi = {};
+      if (fetchedData != null) {
         try {
-          debugPrint("🟡 [SAVE] Converting raw map keys->strings and collecting values...");
-          raw.forEach((k, v) => data[k.toString()] = v);
-          debugPrint("🟢 [SAVE] Conversion done, entries=${data.length}");
+          fetchedData.forEach((k, v) => dataForUi[k.toString()] = v);
         } catch (e, st) {
-          debugPrint("⚠️ [SAVE] Warning converting snapshot.data(): $e");
+          debugPrint("⚠️ [SAVE] Error converting fetched data: $e");
           debugPrint(st.toString());
-          data.addAll(doc);
+          dataForUi.addAll(doc);
         }
       } else {
-        debugPrint("🟡 [SAVE] raw is null — using local doc as fallback");
-        data.addAll(doc);
+        debugPrint("🟡 [SAVE] Using local doc as fallback for UI.");
+        dataForUi.addAll(doc);
       }
-      debugPrint("ℹ️ [SAVE] Prepared raw data (before sanitize): $data");
 
-      // Create a sanitized safe map for passing into widgets (avoid complex objects)
+      debugPrint("ℹ️ [SAVE] Prepared raw data (before sanitize): $dataForUi");
+
+      // Sanitize
       debugPrint("🟡 [SAVE] Sanitizing data to safe primitives...");
-      final safeData = _toSafeMap(data);
+      final safeData = _toSafeMap(dataForUi);
       debugPrint("🟢 [SAVE] Safe user data prepared: $safeData");
 
       if (!mounted) {
@@ -190,21 +356,23 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         return false;
       }
 
-      // STOP loading *before* navigation so overlay/loader won't block the new route
       debugPrint("🟡 [SAVE] Stopping loading before navigation...");
       _setLoading(false);
 
-      // Navigate on next frame to be safe
       WidgetsBinding.instance.addPostFrameCallback((_) {
         try {
           debugPrint("➡️ [NAV] Navigating to HomeScreen for uid=${user.uid}");
-          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => HomeScreen(userData: safeData)));
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => HomeScreen(userData: safeData)),
+          );
           debugPrint("🟢 [NAV] pushReplacement invoked.");
         } catch (e, st) {
           debugPrint("❌ [NAV] Navigation failed: $e");
           debugPrint(st.toString());
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Navigation failed. Check logs.')));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Navigation failed. Check logs.')),
+            );
           }
         }
       });
@@ -215,39 +383,150 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       debugPrint(st.toString());
       if (mounted) {
         _setLoading(false);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to save user data. Check logs.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to save user data. Check logs.'),
+          ),
+        );
       }
       return false;
     }
   }
 
-
+  /// GOOGLE SIGN-IN HANDLER
   Future<void> _handleGoogleSignIn() async {
     debugPrint("➡️ [LOGIN] Google sign-in initiation.");
     _setLoading(true);
     bool navigated = false;
     try {
-      final cred = await signInWithGoogle(); // from auth_impl.dart
+      UserCredential? cred;
+
+      if (kIsWeb) {
+        debugPrint(
+          "[WEB] Detected web platform. Attempting signInWithPopup(GoogleAuthProvider()).",
+        );
+        final provider = GoogleAuthProvider();
+        try {
+          debugPrint(
+            "[WEB] Calling FirebaseAuth.instance.signInWithPopup(provider) now...",
+          );
+          cred = await FirebaseAuth.instance.signInWithPopup(provider);
+          debugPrint(
+            "[WEB] signInWithPopup returned credential. user=${cred.user?.email}, uid=${cred.user?.uid}",
+          );
+        } on FirebaseAuthException catch (e, st) {
+          debugPrint(
+            "[WEB][ERROR] Firebase web signInWithPopup failed: ${e.code} - ${e.message}",
+          );
+          debugPrint(st.toString());
+          final code = (e.code ?? '').toString();
+          if (code.contains('popup-closed-by-user') ||
+              code.contains('popup-blocked') ||
+              code.contains('auth/popup-blocked')) {
+            debugPrint(
+              "[WEB] Popup was closed or blocked. Falling back to signInWithRedirect()...",
+            );
+            try {
+              await FirebaseAuth.instance.signInWithRedirect(provider);
+              debugPrint(
+                "[WEB] signInWithRedirect invoked; returning to allow redirect flow to complete.",
+              );
+              return;
+            } catch (re, rst) {
+              debugPrint("❌ [WEB][ERROR] signInWithRedirect failed: $re");
+              debugPrint(rst.toString());
+              if (mounted)
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Web redirect sign-in failed. Check console.',
+                    ),
+                  ),
+                );
+              return;
+            }
+          } else {
+            if (mounted)
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Web Google sign-in failed. Check console.'),
+                ),
+              );
+            return;
+          }
+        } catch (e, st) {
+          debugPrint(
+            "[WEB][ERROR] Unexpected error during web Google sign-in: $e",
+          );
+          debugPrint(st.toString());
+          if (mounted)
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Unexpected web sign-in error.')),
+            );
+          return;
+        }
+      } else {
+        debugPrint(
+          "[PLATFORM] Non-web detected. Calling signInWithGoogle() from auth_impl.dart",
+        );
+        try {
+          cred = await signInWithGoogle();
+          debugPrint(
+            "[PLATFORM] signInWithGoogle() returned: ${cred != null ? 'credential present' : 'null credential'}",
+          );
+        } catch (e, st) {
+          debugPrint("[PLATFORM][ERROR] signInWithGoogle() threw: $e");
+          debugPrint(st.toString());
+          if (mounted)
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Google sign-in failed.')),
+            );
+          return;
+        }
+      }
+
       if (cred == null) {
-        debugPrint("ℹ️ [LOGIN] Google sign-in cancelled by user.");
+        debugPrint(
+          "ℹ️ [LOGIN] Google sign-in cancelled by user or returned null credential.",
+        );
+        _setLoading(false);
         return;
       }
+
       final user = cred.user;
       if (user == null) {
         debugPrint("❌ [LOGIN] Google sign-in returned no user.");
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Google sign-in failed: no user returned.'),
+            ),
+          );
+        _setLoading(false);
         return;
       }
-      debugPrint("✅ [LOGIN] Google signed in: uid=${user.uid}, email=${user.email}");
+
+      debugPrint(
+        "✅ [LOGIN] Google signed in: uid=${user.uid}, email=${user.email}",
+      );
       navigated = await _saveUserToFirestoreAndNavigate(user);
-      debugPrint("ℹ️ [LOGIN] _saveUserToFirestoreAndNavigate returned: $navigated");
+      debugPrint(
+        "ℹ️ [LOGIN] _saveUserToFirestoreAndNavigate returned: $navigated",
+      );
     } catch (e, st) {
-      debugPrint("❌ [LOGIN] Google sign-in error: $e");
+      debugPrint("❌ [LOGIN] Google sign-in error (outer): $e");
       debugPrint(st.toString());
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Google sign-in failed.')));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Google sign-in failed (see logs).')),
+        );
     } finally {
-      // only stop loader if still loading (if navigation happened we already stopped it)
-      if (mounted && _loading) _setLoading(false);
-      debugPrint("ℹ️ [LOGIN] handleGoogleSignIn finished, navigated=$navigated");
+      if (mounted && _loading) {
+        _setLoading(false);
+      }
+      debugPrint(
+        "ℹ️ [LOGIN] handleGoogleSignIn finished, navigated=$navigated",
+      );
     }
   }
 
@@ -259,20 +538,29 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       final cred = await signInWithApple(); // from auth_impl.dart
       if (cred == null) {
         debugPrint("ℹ️ [LOGIN] Apple sign-in cancelled or not available.");
+        _setLoading(false);
         return;
       }
       final user = cred.user;
       if (user == null) {
         debugPrint("❌ [LOGIN] Apple sign-in returned no user.");
+        _setLoading(false);
         return;
       }
-      debugPrint("✅ [LOGIN] Apple signed in: uid=${user.uid}, email=${user.email}");
+      debugPrint(
+        "✅ [LOGIN] Apple signed in: uid=${user.uid}, email=${user.email}",
+      );
       navigated = await _saveUserToFirestoreAndNavigate(user);
-      debugPrint("ℹ️ [LOGIN] _saveUserToFirestoreAndNavigate returned: $navigated");
+      debugPrint(
+        "ℹ️ [LOGIN] _saveUserToFirestoreAndNavigate returned: $navigated",
+      );
     } catch (e, st) {
       debugPrint("❌ [LOGIN] Apple sign-in error: $e");
       debugPrint(st.toString());
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Apple sign-in failed.')));
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Apple sign-in failed.')));
     } finally {
       if (mounted && _loading) _setLoading(false);
       debugPrint("ℹ️ [LOGIN] handleAppleSignIn finished, navigated=$navigated");
@@ -284,29 +572,48 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     final pass = _passwordController.text;
     debugPrint("➡️ [LOGIN] Email sign-in started for: $email");
     if (email.isEmpty || pass.isEmpty) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Email and password required')));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Email and password required')),
+        );
       return;
     }
     _setLoading(true);
     try {
-      final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(email: email, password: pass);
+      final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: pass,
+      );
       final user = cred.user;
       if (user == null) throw Exception('No user returned');
       debugPrint("✅ [LOGIN] Email sign-in success: ${user.uid}");
       await _saveUserToFirestoreAndNavigate(user);
     } on FirebaseAuthException catch (e) {
-      debugPrint("❌ [LOGIN] Email sign-in FirebaseAuthException: ${e.code} - ${e.message}");
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message ?? 'Sign-in failed')));
+      debugPrint(
+        "❌ [LOGIN] Email sign-in FirebaseAuthException: ${e.code} - ${e.message}",
+      );
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message ?? 'Sign-in failed')));
     } catch (e, st) {
       debugPrint("❌ [LOGIN] Email sign-in error: $e");
       debugPrint(st.toString());
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Email sign-in failed.')));
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Email sign-in failed.')));
     } finally {
       _setLoading(false);
     }
   }
 
-  Widget _socialButton({required String label, required Widget icon, required VoidCallback? onPressed, Color? bg}) {
+  Widget _socialButton({
+    required String label,
+    required Widget icon,
+    required VoidCallback? onPressed,
+    Color? bg,
+  }) {
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton.icon(
@@ -320,7 +627,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           backgroundColor: bg ?? Colors.white,
           foregroundColor: bg != null ? Colors.white : Colors.black87,
           elevation: 1,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           side: bg == null ? BorderSide(color: Colors.grey.shade300) : null,
         ),
       ),
@@ -328,16 +637,25 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   }
 
   Widget _googleButton() {
-    const googleIconUrl = 'https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg';
+    const googleIconUrl =
+        'https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg';
     return _socialButton(
       label: 'Continue with Google',
-      icon: Image.network(googleIconUrl, width: 20, height: 20, errorBuilder: (c, e, s) => const Icon(Icons.g_mobiledata)),
+      icon: Image.network(
+        googleIconUrl,
+        width: 20,
+        height: 20,
+        errorBuilder: (c, e, s) => const Icon(Icons.g_mobiledata),
+      ),
       onPressed: _loading ? null : _handleGoogleSignIn,
     );
   }
 
   Widget _appleButton() {
-    final showApple = defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.macOS || kIsWeb;
+    final showApple =
+        defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        kIsWeb;
     if (!showApple) return const SizedBox.shrink();
     return _socialButton(
       label: 'Continue with Apple',
@@ -347,14 +665,20 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     );
   }
 
-  InputDecoration _inputDecoration({required String hint, required Widget prefix}) {
+  InputDecoration _inputDecoration({
+    required String hint,
+    required Widget prefix,
+  }) {
     return InputDecoration(
       prefixIcon: prefix,
       hintText: hint,
       filled: true,
       fillColor: Colors.grey.shade50,
       contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
     );
   }
 
@@ -364,49 +688,67 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: LayoutBuilder(builder: (context, constraints) {
-          final w = constraints.maxWidth;
-          final cardWidth = w < 500 ? w : (w < 900 ? 520.0 : 640.0);
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final w = constraints.maxWidth;
+            final cardWidth = w < 500 ? w : (w < 900 ? 520.0 : 640.0);
 
-          return Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: cardWidth),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // Animated logo with Hero
-                    ScaleTransition(
-                      scale: _logoScale,
-                      child: Hero(
-                        tag: 'app-logo-hero',
-                        child: CircleAvatar(
-                          radius: (w < 350) ? 36 : 48,
-                          backgroundImage: const AssetImage('assets/images/logo.jpg'),
-                          backgroundColor: Colors.transparent,
+            return Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 24,
+                ),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: cardWidth),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // Animated logo with Hero
+                      ScaleTransition(
+                        scale: _logoScale,
+                        child: Hero(
+                          tag: 'app-logo-hero',
+                          child: CircleAvatar(
+                            radius: (w < 350) ? 36 : 48,
+                            backgroundImage: const AssetImage(
+                              'assets/images/logo.jpg',
+                            ),
+                            backgroundColor: Colors.transparent,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 18),
-                    const Text('Welcome to Naslook', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 6),
-                    Text('Sign in to continue', style: TextStyle(color: Colors.grey.shade600)),
-                    const SizedBox(height: 20),
+                      const SizedBox(height: 18),
+                      const Text(
+                        'Welcome to Naslook',
+                        style: TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Sign in to continue',
+                        style: TextStyle(color: Colors.grey.shade600),
+                      ),
+                      const SizedBox(height: 20),
 
-                    // AnimatedCrossFade: show form or subtle loader overlay
-                    AnimatedCrossFade(
-                      firstChild: _buildForm(cardWidth),
-                      secondChild: _buildLoadingCard(cardWidth),
-                      crossFadeState: _loading ? CrossFadeState.showSecond : CrossFadeState.showFirst,
-                      duration: const Duration(milliseconds: 300),
-                    ),
-                  ],
+                      // AnimatedCrossFade: show form or subtle loader overlay
+                      AnimatedCrossFade(
+                        firstChild: _buildForm(cardWidth),
+                        secondChild: _buildLoadingCard(cardWidth),
+                        crossFadeState: _loading
+                            ? CrossFadeState.showSecond
+                            : CrossFadeState.showFirst,
+                        duration: const Duration(milliseconds: 300),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          );
-        }),
+            );
+          },
+        ),
       ),
     );
   }
@@ -430,15 +772,26 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
             Container(
               width: 120,
               height: 120,
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 12, offset: const Offset(0, 6))
-              ]),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.06),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: const [
                   CircularProgressIndicator(strokeWidth: 3),
                   SizedBox(height: 12),
-                  Text('Signing you in...', style: TextStyle(fontWeight: FontWeight.w600)),
+                  Text(
+                    'Signing you in...',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ],
               ),
             ),
@@ -461,34 +814,67 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
             const SizedBox(height: 12),
             _appleButton(),
             const SizedBox(height: 18),
-            Row(children: [const Expanded(child: Divider()), Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text('OR', style: TextStyle(color: Colors.grey.shade500))), const Expanded(child: Divider())]),
+            Row(
+              children: [
+                const Expanded(child: Divider()),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    'OR',
+                    style: TextStyle(color: Colors.grey.shade500),
+                  ),
+                ),
+                const Expanded(child: Divider()),
+              ],
+            ),
             const SizedBox(height: 18),
 
             // Email
-            Align(alignment: Alignment.centerLeft, child: const Text('Email', style: TextStyle(fontWeight: FontWeight.w600))),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: const Text(
+                'Email',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _emailController,
               keyboardType: TextInputType.emailAddress,
-              decoration: _inputDecoration(hint: 'you@example.com', prefix: const Icon(Icons.email_outlined)),
+              decoration: _inputDecoration(
+                hint: 'you@example.com',
+                prefix: const Icon(Icons.email_outlined),
+              ),
             ),
             const SizedBox(height: 12),
 
             // Password
-            Align(alignment: Alignment.centerLeft, child: const Text('Password', style: TextStyle(fontWeight: FontWeight.w600))),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: const Text(
+                'Password',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _passwordController,
               obscureText: _obscurePassword,
-              decoration: _inputDecoration(
-                hint: '••••••••',
-                prefix: const Icon(Icons.lock_outline),
-              ).copyWith(
-                suffixIcon: IconButton(
-                  icon: Icon(_obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined),
-                  onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                ),
-              ),
+              decoration:
+                  _inputDecoration(
+                    hint: '••••••••',
+                    prefix: const Icon(Icons.lock_outline),
+                  ).copyWith(
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                    ),
+                  ),
             ),
             const SizedBox(height: 16),
 
@@ -501,11 +887,19 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   duration: const Duration(milliseconds: 250),
                   child: _loading
                       ? const SizedBox.shrink()
-                      : const Padding(padding: EdgeInsets.symmetric(vertical: 14), child: Text('Sign in', style: TextStyle(fontSize: 16))),
+                      : const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 14),
+                          child: Text(
+                            'Sign in',
+                            style: TextStyle(fontSize: 16),
+                          ),
+                        ),
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.black87,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   minimumSize: const Size.fromHeight(48),
                 ),
               ),
@@ -516,29 +910,54 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton(
-                onPressed: _loading ? null : () => debugPrint("ℹ️ [LOGIN] Forgot password pressed"),
-                child: const Text('Forgot password?', style: TextStyle(color: Colors.black)),
+                onPressed: _loading
+                    ? null
+                    : () => debugPrint("ℹ️ [LOGIN] Forgot password pressed"),
+                child: const Text(
+                  'Forgot password?',
+                  style: TextStyle(color: Colors.black),
+                ),
               ),
             ),
 
             const SizedBox(height: 10),
 
             // Signup row
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Text('Need an account? ', style: TextStyle(color: Colors.grey.shade700)),
-              GestureDetector(
-                onTap: _loading ? null : () => debugPrint("ℹ️ [LOGIN] Sign up pressed"),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(8)),
-                  child: const Text('Sign up', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'Need an account? ',
+                  style: TextStyle(color: Colors.grey.shade700),
                 ),
-              ),
-            ]),
-
+                GestureDetector(
+                  onTap: _loading
+                      ? null
+                      : () => debugPrint("ℹ️ [LOGIN] Sign up pressed"),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'Sign up',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
 }
+//https://chatgpt.com/c/6918b06d-2df8-8327-81d4-f102f6ec8d55
