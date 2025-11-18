@@ -4,12 +4,9 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:naslook/screens/home_screen.dart';
-import 'package:naslook/screens/messages_screen.dart';
 import '../models/user_profile.dart';
 
 typedef OnUserSelected = void Function(UserProfile profile);
-
 
 const String fallbackAvatar =
     'https://img.icons8.com/color/1200/person-male.jpg';
@@ -25,14 +22,12 @@ class DiscoverUsersScreen extends StatefulWidget {
 class _DiscoverUsersScreenState extends State<DiscoverUsersScreen> {
   final FirebaseFirestore _fs = FirebaseFirestore.instance;
 
-  // controls
+  // Controls
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _idCtrl = TextEditingController();
   String? _cityFilter = '';
 
-
-
-  // pagination
+  // Pagination
   static const int _pageSize = 10;
   DocumentSnapshot<Map<String, dynamic>>? _lastDoc;
   bool _isLoading = false;
@@ -193,7 +188,6 @@ class _DiscoverUsersScreenState extends State<DiscoverUsersScreen> {
     }
   }
 
-  // copy id logic per id
   Future<void> _handleCopyId(String id) async {
     try {
       await Clipboard.setData(ClipboardData(text: id));
@@ -224,7 +218,6 @@ class _DiscoverUsersScreenState extends State<DiscoverUsersScreen> {
     }
   }
 
-  // Stylish avatar that falls back to fallbackAvatar on error
   Widget _buildAvatar(String url, String displayId) {
     final imageUrl = (url.isNotEmpty) ? url : fallbackAvatar;
     return Container(
@@ -335,7 +328,7 @@ class _DiscoverUsersScreenState extends State<DiscoverUsersScreen> {
                     final cities = snap.data ?? [];
 
                     return DropdownButtonFormField<String>(
-                      value: _cityFilter ?? '',
+                      value: (_cityFilter != null && _cityFilter!.isNotEmpty) ? _cityFilter : '',
                       hint: const Text('City'),
                       items: [
                         const DropdownMenuItem(value: '', child: Text('All Cities')),
@@ -429,131 +422,204 @@ class _DiscoverUsersScreenState extends State<DiscoverUsersScreen> {
             },
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              child: Row(
-                children: [
-                  // avatar with a soft background circle
-                  _buildAvatar(p.profileImageUrl, p.displayId),
-                  const SizedBox(width: 12),
-                  // main info
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // name only (single-line, ellipsis)
-                        Text(
-                          p.name.isNotEmpty ? p.name : p.displayId,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            Flexible(child: Text(p.jobTitle.isNotEmpty ? p.jobTitle : '—', style: const TextStyle(color: Colors.grey, fontSize: 13))),
-                            const SizedBox(width: 8),
-                            const Icon(Icons.location_on, size: 14, color: Colors.grey),
-                            const SizedBox(width: 4),
-                            Text(p.city.isNotEmpty ? p.city : 'Unknown', style: const TextStyle(color: Colors.grey, fontSize: 13)),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        // skills
-                        if (p.skills.isNotEmpty)
-                          Wrap(
-                            children: p.skills.take(6).map((s) => _buildSkillChip(s)).toList(),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  // actions column (stylish buttons + view + copy id)
-                  Column(
+              child: LayoutBuilder(builder: (context, constraints) {
+                // if there is little horizontal space, use stacked layout to avoid overflow
+                final isNarrow = constraints.maxWidth < 360;
+
+                if (isNarrow) {
+                  // Vertical layout for very narrow screens
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Contact (primary)
-                      GestureDetector(
-                        onTap: () {
-                          if (widget.onUserSelected != null) {
-                            widget.onUserSelected!(p);
-                            Navigator.of(context).pop();
-                          } else {
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Contact ${p.name}')));
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(colors: [Colors.pink.shade400, Colors.orange.shade400]),
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.10), blurRadius: 12, offset: const Offset(0, 8))],
-                          ),
-                          child: Row(
-                            children: const [
-                              Icon(Icons.person_add_alt_1_outlined, color: Colors.white, size: 16),
-                              SizedBox(width: 8),
-                              Text('Contact', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      // View (secondary)
-                      GestureDetector(
-                        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => _ProfilePreviewPage(profile: p))),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.grey.shade200),
-                            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 4))],
-                          ),
-                          child: const Text('View', style: TextStyle(fontWeight: FontWeight.w700)),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      // Copy ID (tertiary) - matches the snippet behaviour with animation
-                      SizedBox(
-                        width: 120,
-                        child: Material(
-                          color: Theme.of(context).cardColor,
-                          borderRadius: BorderRadius.circular(10),
-                          child: InkWell(
-                            onTap: () => _handleCopyId(id),
-                            borderRadius: BorderRadius.circular(10),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 220),
-                                    transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
-                                    child: copied
-                                        ? Icon(Icons.check, key: ValueKey('check-$id'), size: 16, color: Colors.green.shade700)
-                                        : const Icon(Icons.copy, key: ValueKey('copy'), size: 16, color: Colors.black87),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  DefaultTextStyle(
-                                    style: TextStyle(
-                                        color: copied ? Colors.green.shade700 : Theme.of(context).textTheme.bodyLarge?.color,
-                                        fontWeight: FontWeight.w600),
-                                    child: Text(copied ? 'Copied' : 'Copy ID'),
-                                  ),
-                                ],
-                              ),
+                      Row(
+                        children: [
+                          _buildAvatar(p.profileImageUrl, p.displayId),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  p.name.isNotEmpty ? p.name : p.displayId,
+                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 6),
+                                Row(
+                                  children: [
+                                    Flexible(child: Text(p.jobTitle.isNotEmpty ? p.jobTitle : '—', style: const TextStyle(color: Colors.grey, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                    const SizedBox(width: 8),
+                                    const Icon(Icons.location_on, size: 14, color: Colors.grey),
+                                    const SizedBox(width: 4),
+                                    Flexible(child: Text(p.city.isNotEmpty ? p.city : 'Unknown', style: const TextStyle(color: Colors.grey, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                  ],
+                                ),
+                              ],
                             ),
                           ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      if (p.skills.isNotEmpty)
+                        Wrap(
+                          children: p.skills.take(6).map((s) => _buildSkillChip(s)).toList(),
                         ),
+                      const SizedBox(height: 10),
+                      // actions row (full width, buttons wrap)
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _contactButton(p),
+                          _viewButton(p),
+                          _copyIdButton(id, copied),
+                        ],
                       ),
                     ],
-                  )
-                ],
-              ),
+                  );
+                }
+
+                // Default horizontal layout for wider screens
+                return Row(
+                  children: [
+                    _buildAvatar(p.profileImageUrl, p.displayId),
+                    const SizedBox(width: 12),
+                    // main info
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            p.name.isNotEmpty ? p.name : p.displayId,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              Flexible(child: Text(p.jobTitle.isNotEmpty ? p.jobTitle : '—', style: const TextStyle(color: Colors.grey, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                              const SizedBox(width: 8),
+                              const Icon(Icons.location_on, size: 14, color: Colors.grey),
+                              const SizedBox(width: 4),
+                              Flexible(child: Text(p.city.isNotEmpty ? p.city : 'Unknown', style: const TextStyle(color: Colors.grey, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          if (p.skills.isNotEmpty)
+                            Wrap(
+                              children: p.skills.take(6).map((s) => _buildSkillChip(s)).toList(),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // actions column with constrained width so it never forces overflow
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 140),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _contactButton(p),
+                          const SizedBox(height: 8),
+                          _viewButton(p),
+                          const SizedBox(height: 8),
+                          _copyIdButton(id, copied, center: true),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              }),
             ),
           ),
         ),
       ),
     );
+  }
+
+  Widget _contactButton(UserProfile p) {
+    return GestureDetector(
+      onTap: () {
+        if (widget.onUserSelected != null) {
+          widget.onUserSelected!(p);
+          Navigator.of(context).pop();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Contact ${p.name}')));
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [Colors.pink.shade400, Colors.orange.shade400]),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.10), blurRadius: 12, offset: const Offset(0, 8))],
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.person_add_alt_1_outlined, color: Colors.white, size: 16),
+            SizedBox(width: 8),
+            Text('Contact', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _viewButton(UserProfile p) {
+    return GestureDetector(
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => _ProfilePreviewPage(profile: p))),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade200),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 4))],
+        ),
+        child: const Text('View', style: TextStyle(fontWeight: FontWeight.w700)),
+      ),
+    );
+  }
+
+  Widget _copyIdButton(String id, bool copied, {bool center = false}) {
+    final widget = Material(
+      color: Theme.of(context).cardColor,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: () => _handleCopyId(id),
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
+                child: copied
+                    ? Icon(Icons.check, key: ValueKey('check-$id'), size: 16, color: Colors.green.shade700)
+                    : const Icon(Icons.copy, key: ValueKey('copy'), size: 16, color: Colors.black87),
+              ),
+              const SizedBox(width: 8),
+              DefaultTextStyle(
+                style: TextStyle(
+                    color: copied ? Colors.green.shade700 : Theme.of(context).textTheme.bodyLarge?.color,
+                    fontWeight: FontWeight.w600),
+                child: Text(copied ? 'Copied' : 'Copy ID'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (center) {
+      return Center(child: ConstrainedBox(constraints: const BoxConstraints(minWidth: 80, maxWidth: 120), child: widget));
+    }
+    return ConstrainedBox(constraints: const BoxConstraints(minWidth: 80, maxWidth: 140), child: widget);
   }
 
   PreferredSizeWidget _buildCustomAppBar(BuildContext context) {
