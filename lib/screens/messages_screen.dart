@@ -1,11 +1,7 @@
 // lib/screens/messages_screen.dart
 import 'package:flutter/material.dart';
+import 'package:naslook/screens/discover_users_screen.dart';
 
-/// A polished "Messages" screen shown when there are no conversations yet.
-/// - Big decorative icon
-/// - Title + subtitle (English)
-/// - A non-traditional, attractive gradient button with white text "Discover users"
-/// - Accepts an optional onDiscover callback
 class MessagesScreen extends StatelessWidget {
   final VoidCallback? onDiscover;
 
@@ -51,7 +47,7 @@ class MessagesScreen extends StatelessWidget {
                         color: Colors.black.withOpacity(0.08),
                         blurRadius: 18,
                         offset: const Offset(0, 12),
-                      )
+                      ),
                     ],
                   ),
                   child: Center(
@@ -64,7 +60,10 @@ class MessagesScreen extends StatelessWidget {
                           height: isLarge ? 160 : 120,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            border: Border.all(color: theme.dividerColor.withOpacity(0.06), width: 10),
+                            border: Border.all(
+                              color: theme.dividerColor.withOpacity(0.06),
+                              width: 10,
+                            ),
                           ),
                         ),
                         Icon(
@@ -82,7 +81,11 @@ class MessagesScreen extends StatelessWidget {
                 // Title
                 Text(
                   'No conversations',
-                  style: TextStyle(fontSize: isLarge ? 24 : 20, fontWeight: FontWeight.w800, color: theme.textTheme.bodyLarge?.color),
+                  style: TextStyle(
+                    fontSize: isLarge ? 24 : 20,
+                    fontWeight: FontWeight.w800,
+                    color: theme.textTheme.bodyLarge?.color,
+                  ),
                 ),
 
                 const SizedBox(height: 8),
@@ -90,7 +93,11 @@ class MessagesScreen extends StatelessWidget {
                 // Subtitle
                 Text(
                   'You don\'t have any chats yet. Start connecting with other users.',
-                  style: TextStyle(fontSize: 14, color: theme.textTheme.bodySmall?.color, height: 1.4),
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: theme.textTheme.bodySmall?.color,
+                    height: 1.4,
+                  ),
                   textAlign: TextAlign.center,
                 ),
 
@@ -98,10 +105,15 @@ class MessagesScreen extends StatelessWidget {
 
                 // Fancy discover button
                 _DiscoverButton(
-                  onTap: onDiscover ??
-                          () {
-                        // default: show a simple placeholder if no callback provided
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Discover users pressed')));
+                  onTap:
+                      onDiscover ??
+                      () {
+                        // default navigation to DiscoverUsersScreen
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const DiscoverUsersScreen(),
+                          ),
+                        );
                       },
                 ),
               ],
@@ -115,13 +127,15 @@ class MessagesScreen extends StatelessWidget {
 
 class _DiscoverButton extends StatefulWidget {
   final VoidCallback onTap;
+
   const _DiscoverButton({Key? key, required this.onTap}) : super(key: key);
 
   @override
   State<_DiscoverButton> createState() => _DiscoverButtonState();
 }
 
-class _DiscoverButtonState extends State<_DiscoverButton> with SingleTickerProviderStateMixin {
+class _DiscoverButtonState extends State<_DiscoverButton>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _ani;
   late final Animation<double> _scale;
   bool _pressed = false;
@@ -129,8 +143,14 @@ class _DiscoverButtonState extends State<_DiscoverButton> with SingleTickerProvi
   @override
   void initState() {
     super.initState();
-    _ani = AnimationController(vsync: this, duration: const Duration(milliseconds: 350));
-    _scale = Tween<double>(begin: 1.0, end: 0.98).animate(CurvedAnimation(parent: _ani, curve: Curves.easeOut));
+    _ani = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _scale = Tween<double>(
+      begin: 1.0,
+      end: 0.98,
+    ).animate(CurvedAnimation(parent: _ani, curve: Curves.easeOut));
   }
 
   @override
@@ -172,7 +192,10 @@ class _DiscoverButtonState extends State<_DiscoverButton> with SingleTickerProvi
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: _pressed
-                    ? [theme.colorScheme.primary.withOpacity(0.95), theme.colorScheme.secondary.withOpacity(0.95)]
+                    ? [
+                        theme.colorScheme.primary.withOpacity(0.95),
+                        theme.colorScheme.secondary.withOpacity(0.95),
+                      ]
                     : [theme.colorScheme.secondary, theme.colorScheme.primary],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
@@ -205,13 +228,21 @@ class _DiscoverButtonState extends State<_DiscoverButton> with SingleTickerProvi
                     color: Colors.white.withOpacity(0.16),
                     border: Border.all(color: Colors.white.withOpacity(0.10)),
                   ),
-                  child: const Icon(Icons.explore, color: Colors.white, size: 20),
+                  child: const Icon(
+                    Icons.explore,
+                    color: Colors.white,
+                    size: 20,
+                  ),
                 ),
 
                 // label
                 const Text(
                   'Discover users',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
                 ),
               ],
             ),

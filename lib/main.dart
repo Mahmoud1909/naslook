@@ -11,7 +11,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-/// Try to show a dialog in a safe way if navigator context is ready.
 void _tryShowSafeDialog(String title, String message) {
   try {
     final ctx = navigatorKey.currentState?.overlay?.context;
